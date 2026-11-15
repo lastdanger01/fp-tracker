@@ -8,7 +8,11 @@ import json
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.core import callback
 
 from .const import (
@@ -174,22 +178,41 @@ class FpTrackerConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: Any) -> Any:
         """Return the options flow handler."""
-        return FpTrackerOptionsFlow(config_entry)
+        return FpTrackerOptionsFlow()
 
 
-class FpTrackerOptionsFlow(ConfigFlow):
-    """Handle the fp_tracker options."""
+class FpTrackerOptionsFlow(OptionsFlow):
+    """Handle the fp_tracker options.
 
-    def __init__(self, config_entry: Any) -> None:
-        """Initialize the options flow."""
-        self.config_entry = config_entry
+    The credentials are validated here as well, because the options
+    flow is the place where a dead token gets replaced.
+    """
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
+            token = str(user_input.get(CONF_TOKEN, "") or "").strip()
+            if not token:
+                errors[CONF_TOKEN] = "token_required"
+            elif DEVICE_TOKEN_KID_MARKER in _jwt_kid(token):
+                errors[CONF_TOKEN] = "token_is_device_token"
+            elif not str(user_input.get(CONF_USER_SOURCE, "") or "").strip():
+                errors[CONF_USER_SOURCE] = "user_source_required"
+            else:
+                error = await _async_token_works(self.hass, user_input)
+                if error:
+                    errors[CONF_TOKEN] = error
+
+        if not errors and user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
         current = {**self.config_entry.data, **self.config_entry.options}
-        return self.async_show_form(step_id="init", data_schema=_schema(current))
+        return self.async_show_form(
+            step_id="init",
+            data_schema=_schema(current),
+            errors=errors,
+        )

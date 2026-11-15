@@ -52,6 +52,17 @@ class _ConfigFlowResult(dict):  # noqa: D101 - stub
 
 ha_config_entries.ConfigFlow = _ConfigFlow
 ha_config_entries.ConfigFlowResult = _ConfigFlowResult
+
+
+class _OptionsFlow:  # noqa: D101 - stub
+    """Stand in for the real options flow base class."""
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        """Accept the domain keyword the real base class takes."""
+        super().__init_subclass__()
+
+
+ha_config_entries.OptionsFlow = _OptionsFlow
 sys.modules.setdefault("homeassistant", ha_root)
 sys.modules.setdefault("homeassistant.core", ha_core)
 sys.modules.setdefault("homeassistant.config_entries", ha_config_entries)
@@ -191,6 +202,23 @@ check(
     "連線錯誤 → cannot_connect",
     asyncio.run(run_flow()),
     "cannot_connect",
+)
+
+# --------------------------------------------------- the options flow
+section("options flow 必須是 OptionsFlow")
+# The options flow used to inherit from ConfigFlow, which made Home
+# Assistant answer "Cannot find integration options" and answer HTTP
+# 500 as soon as the options were opened. The credentials are the
+# place where a dead token gets replaced, so the flow has to work.
+check(
+    "FpTrackerOptionsFlow 繼承 OptionsFlow",
+    issubclass(config_flow.FpTrackerOptionsFlow, ha_config_entries.OptionsFlow),
+    True,
+)
+check(
+    "不再繼承 ConfigFlow",
+    issubclass(config_flow.FpTrackerOptionsFlow, ha_config_entries.ConfigFlow),
+    False,
 )
 
 print()
