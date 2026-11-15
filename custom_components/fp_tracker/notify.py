@@ -97,5 +97,4 @@ async def async_setup_notifications(hass: HomeAssistant, coordinator: TrackerCoo
             order = next((o for o in orders if o.get("order_code") == code), None)
             if order:
                 await _notify(order)
-
     coordinator.async_add_listener(_on_update)

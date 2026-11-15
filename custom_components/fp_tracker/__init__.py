@@ -23,7 +23,10 @@ from .const import (
     CONF_SCAN_INTERVAL,
     CONF_SESSION_ID,
     CONF_TOKEN,
+    CONF_TOKEN_TIMEOUT,
     CONF_USER_SOURCE,
+    CONF_USERNAME,
+    CONF_X_DEVICE,
     DEFAULT_LOCALCODE,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -32,7 +35,7 @@ from .const import (
     STATE_LABELS,
 )
 from .coordinator import TrackerCoordinator
-from .credentials import async_load_credentials
+from .credentials import async_load_credentials, async_load_shared_credentials
 from .notify import async_setup_notifications
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +67,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if stored:
         data.update({k: v for k, v in stored.items() if v})
 
+    # The credentials are shared with the older foodpanda integration.
+    # A refresh token can only be used once, so two integrations that
+    # keep their own copy of it end up invalidating each other. The
+    # shared file holds the one copy that both of them use.
+    account = str(data.get(CONF_USERNAME, "") or "") or None
+    shared = await async_load_shared_credentials(hass, account)
+    if shared:
+        data.update({k: v for k, v in shared.items() if v})
+
     client = FoodpandaClient(
         hass,
         localcode=data.get(CONF_LOCALCODE, DEFAULT_LOCALCODE),
@@ -73,6 +85,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client_id=data.get(CONF_CLIENT_ID, ""),
         session_id=data.get(CONF_SESSION_ID, ""),
         user_source=data.get(CONF_USER_SOURCE, ""),
+        x_device=data.get(CONF_X_DEVICE, ""),
+        token_timeout=int(data.get(CONF_TOKEN_TIMEOUT, 0) or 0),
     )
 
     scan_interval = int(data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL.total_seconds()))
@@ -85,6 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         home_lon=data.get("home_longitude"),
         scan_interval=scan_interval,
         max_orders=MAX_ORDERS,
+        account=account,
     )
 
     hass.data[DOMAIN][entry.entry_id] = coordinator

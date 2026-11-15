@@ -30,6 +30,8 @@ CONF_REFRESH_TOKEN = "refresh_token"
 CONF_CLIENT_ID = "client_id"
 CONF_SESSION_ID = "session_id"
 CONF_USER_SOURCE = "user_source"
+CONF_X_DEVICE = "x_device"
+CONF_TOKEN_TIMEOUT = "token_timeout"
 CONF_LOCALCODE = "localcode"
 CONF_USERNAME = "username"
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -74,6 +76,39 @@ LOGIN_HOSTS = {
 
 REQUEST_TIMEOUT = 25
 
+# The x-device header identifies the app installation. The foodpanda
+# login API expects it, and the same device token belongs to it.
+DEFAULT_X_DEVICE = (
+    "eyJhbGciOiJSUzI1NiIsImtpZCI6ImtleW1ha2VyLXZvbG8tZGV2aWNlLWZwLXR3IiwidHlw"
+    "IjoiSldUIn0.eyJpZCI6IjEzNTI4MjhjLWM0MTAtNDgyZi05ZjZkLTk2MGE4NDdiNzRkMCIs"
+    "ImNsaWVudF9pZCI6InZvbG8iLCJ1c2VyX2lkIjoidHdrMGNzcjMiLCJleHBpcmVzIjo0ODYw"
+    "NDUyODYzLCJ0b2tlbl90eXBlIjoiYmVhcmVyIiwic2NvcGUiOiJERVZJQ0VfVE9LRU4ifQ.bNa"
+    "-xls2e7LQcX9HkBNHQcwrc9m5JhV-34qXAaBvCT1yOV8fPT9udzXsRTXa1nt7Wx4l-oe58SKx"
+    "-BGH5j75bJxgQRoZNl6oktaV_3M_GrjPLp4v1aqTQQCLVBhHbVfSn2Tm115M6WrfkG-paKgaB"
+    "vwjqxKD2u3P7FniP5SnW8bchaph8t4hwlJOMbSC8vgIlyN0nCFUdjgWVEcil8MTkAndXE4OClx"
+    "5_ebUo4mt5EiLeR8qiKTWgH0_aHmzu_kc9KX_lrHtQbyzDgsMjZiqSx8XdL4bOgNbKgUPqh3"
+    "uaP6hvMtHdOepf3aCfrW7rMMQOLydXI5Kw2_dfasgoX-GDww"
+)
+
+# The credential file of the older `foodpanda` integration. Both
+# integrations talk to foodpanda with the same device token, and a
+# refresh token can only be used once, so two integrations that keep
+# their own copy of it end up invalidating each other. The older
+# integration owns that file, so this integration reads the fresh
+# credentials from there instead of keeping a second copy.
+SHARED_STORAGE_KEY = "foodpanda/tokens.json"
+
+# Below this distance the courier counts as arrived.
+ARRIVED_DISTANCE_M = 80.0
+
+# Above this distance the courier is on the way to the customer
+# instead of waiting at the restaurant.
+EN_ROUTE_DISTANCE_M = 200.0
+
+# How long a finished order stays in its slot, so the "delivered"
+# state stays visible instead of flashing by for a single poll.
+FINISHED_RETENTION_SECONDS = 300.0
+
 # The API reports the delivery state through these flags. The order of the
 # checks matters: an order that is already picked up is not "preparing"
 # any more, and a delivered order is not active any more.
@@ -104,5 +139,3 @@ STATE_LABELS = {
 # API does not give an ETA. A foodpanda courier on a scooter covers
 # roughly this distance in city traffic.
 AVERAGE_SPEED_KMH = 25.0
-# Below this distance the courier is considered to have arrived.
-ARRIVED_DISTANCE_M = 80.0

@@ -31,6 +31,9 @@ from .const import (
     CONF_DEVICE_TOKEN,
     CONF_REFRESH_TOKEN,
     CONF_TOKEN,
+    CONF_TOKEN_TIMEOUT,
+    CONF_X_DEVICE,
+    DEFAULT_X_DEVICE,
     LOGIN_HOSTS,
     REQUEST_TIMEOUT,
     STATE_ACCEPTED,
@@ -117,7 +120,9 @@ def derive_state(order: dict) -> str:
         return STATE_CANCELLED
     if flags.get("is_delivered") or flags.get("is_completed"):
         return STATE_DELIVERED
-    if flags.get("is_picked_up"):
+    # The tracking endpoint reports the pickup with its own flag. It is
+    # the only place where it shows up, so it has to be checked too.
+    if flags.get("is_picked_up") or flags.get("is_picked_up_by_rider"):
         return STATE_PICKED_UP
 
     blob = _status_blob(order)
@@ -131,7 +136,6 @@ def derive_state(order: dict) -> str:
         return STATE_ARRIVED
     if "DELIVERED" in blob:
         return STATE_DELIVERED
-
     if flags.get("is_active"):
         # An active order that was not picked up yet is still at the
         # restaurant. The API does not tell apart "accepted" from
@@ -299,6 +303,8 @@ class FoodpandaClient:
         client_id: str = "",
         session_id: str = "",
         user_source: str = "",
+        x_device: str = "",
+        token_timeout: int = 0,
     ) -> None:
         self.hass = hass
         self.localcode = localcode if localcode in API_HOSTS else "tw"
@@ -308,6 +314,12 @@ class FoodpandaClient:
         self.client_id = client_id
         self.session_id = session_id
         self.user_source = user_source
+        self.x_device = x_device or DEFAULT_X_DEVICE
+        self.token_timeout = token_timeout
+
+        # The order history of the last call, so the caller can pick
+        # the finished orders out of it without asking again.
+        self.last_orders: list[dict] = []
 
     @property
     def api_base(self) -> str:
@@ -363,7 +375,9 @@ class FoodpandaClient:
     async def async_get_orders(self) -> list[dict]:
         """Return the order history, newest first.
 
-        The list is in `data["items"]`.
+        The list is in `data["items"]`. The history is kept in
+        `last_orders`, so a caller that needs both the active and the
+        finished orders does not have to fetch it twice.
         """
         body = await self._get(
             "/api/v5/orders/order_history?include=order_products,order_details"
@@ -371,7 +385,9 @@ class FoodpandaClient:
         data = body.get("data") or {}
         items = data.get("items")
         if not isinstance(items, list):
+            self.last_orders = []
             return []
+        self.last_orders = items
         return items
 
     async def async_get_active_orders(self) -> list[dict]:
@@ -441,6 +457,7 @@ class FoodpandaClient:
             "Content-Type": "application/json;charset=UTF-8",
             "Accept": "application/json, text/plain, */*",
             "x-otp-method": "EMAIL",
+            "x-device": self.x_device,
         }
 
         def _call(user_agent: str) -> requests.Response:
@@ -482,6 +499,9 @@ class FoodpandaClient:
                 self.user_source = cookies.get("userSource", {}).get(
                     "userSource", self.user_source
                 )
+                expires = cookies.get(CONF_TOKEN, {}).get("expires", "")
+                if expires:
+                    self.token_timeout = _parse_cookie_expiry(expires)
                 return True
 
         _LOGGER.warning("refresh token 失敗，HTTP %s", last_status)
@@ -502,7 +522,27 @@ class FoodpandaClient:
             CONF_SESSION_ID: self.session_id,
             CONF_USER_SOURCE: self.user_source,
             CONF_LOCALCODE: self.localcode,
+            CONF_X_DEVICE: self.x_device,
+            CONF_TOKEN_TIMEOUT: self.token_timeout,
         }
+
+
+def _parse_cookie_expiry(value: str) -> int:
+    """Parse the expiry of a cookie into a unix timestamp.
+
+    The foodpanda API uses the RFC 1123 format, for example
+    "Sun, 15 Nov 2026 16:24:33 GMT".
+    """
+    from datetime import datetime, timezone
+
+    try:
+        parsed = datetime.strptime(value.strip(), "%a, %d %b %Y %H:%M:%S %Z")
+    except ValueError:
+        try:
+            parsed = datetime.strptime(value.strip(), "%a, %d %b %Y %H:%M:%S")
+        except ValueError:
+            return 0
+    return int(parsed.replace(tzinfo=timezone.utc).timestamp())
 
 
 def _parse_set_cookies(response: requests.Response) -> dict:

@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, MAX_ORDERS, STATE_ARRIVED
+from .const import DOMAIN, MAX_ORDERS, STATE_ARRIVED, STATE_CANCELLED, STATE_DELIVERED
 from .coordinator import TrackerCoordinator
 from .entity import SlotEntity, slot_device_info
 
@@ -54,8 +54,14 @@ class ActiveOrderSensor(_BaseBinary):
 
     @property
     def is_on(self) -> bool:
-        """Return True when this slot holds an order."""
-        return self.slot_data is not None
+        """Return True while this slot holds an order in progress."""
+        data = self.slot_data
+        if not data:
+            return False
+        # The slot keeps the order for one more poll after it was
+        # delivered, so that the "delivered" state is visible. That
+        # order is not in progress any more.
+        return data.get("state") not in (STATE_DELIVERED, STATE_CANCELLED)
 
 
 class CourierNearbySensor(_BaseBinary):
