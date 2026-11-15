@@ -1,19 +1,17 @@
-"""Watches the delivery state and notifies on every change.
+"""Watches the delivery states and notifies on every change.
 
 This is what makes the integration useful without opening the HA UI: the
 moment the foodpanda app changes the order state, a notification goes
-out.
+out. Every order is watched separately, so two orders in parallel do
+not hide each other.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import DOMAIN
 from .coordinator import TrackerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,10 +50,12 @@ def _build_message(data: dict) -> str:
 async def async_setup_notifications(hass: HomeAssistant, coordinator: TrackerCoordinator) -> None:
     """Set up the state change notifications for one coordinator."""
 
+    # The last known state of every order, so a real change can be told
+    # apart from a poll that returned the same thing again.
+    last_states: dict[str, str] = {}
+
     async def _notify(data: dict) -> None:
         """Send the notification."""
-        if not data.get("active"):
-            return
         state = data.get("state")
         if state not in NOTIFY_STATES:
             return
@@ -75,16 +75,27 @@ async def async_setup_notifications(hass: HomeAssistant, coordinator: TrackerCoo
     async def _on_update() -> None:
         """Called after every coordinator refresh."""
         data = coordinator.data or {}
-        state = data.get("state")
-        order_code = data.get("order_code")
+        orders = data.get("orders") or []
 
-        # Notify when the state changed, or when a new order started.
-        changed = state != coordinator.last_state or order_code != coordinator.last_order_code
+        seen: dict[str, str] = {}
+        for order in orders:
+            code = order.get("order_code")
+            if not code:
+                continue
+            seen[code] = order.get("state")
 
-        coordinator.last_state = state
-        coordinator.last_order_code = order_code
+        # Orders that are gone are forgotten, so a new order with the
+        # same code later still counts as a change.
+        for code in list(last_states):
+            if code not in seen:
+                last_states.pop(code, None)
 
-        if changed:
-            await _notify(data)
+        for code, state in seen.items():
+            if last_states.get(code) == state:
+                continue
+            last_states[code] = state
+            order = next((o for o in orders if o.get("order_code") == code), None)
+            if order:
+                await _notify(order)
 
     coordinator.async_add_listener(_on_update)

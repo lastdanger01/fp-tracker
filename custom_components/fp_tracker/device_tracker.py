@@ -1,7 +1,8 @@
 """Device tracker platform for the fp_tracker integration.
 
 The courier position is exposed as a device tracker so the HA map card
-can show the courier moving towards the delivery address.
+can show the courier moving towards the delivery address. Every order
+slot gets its own tracker.
 """
 
 from __future__ import annotations
@@ -10,10 +11,10 @@ from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import ATTR_ORDER_CODE, ATTR_RESTAURANT, DOMAIN
+from .const import ATTR_ORDER_CODE, ATTR_RESTAURANT, DOMAIN, MAX_ORDERS
 from .coordinator import TrackerCoordinator
+from .entity import SlotEntity, slot_device_info
 
 
 async def async_setup_entry(
@@ -21,20 +22,23 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the fp_tracker device tracker."""
+    """Set up the fp_tracker device trackers."""
     coordinator: TrackerCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([CourierTracker(coordinator)])
+
+    async_add_entities(
+        [CourierTracker(coordinator, slot) for slot in range(MAX_ORDERS)]
+    )
 
 
-class CourierTracker(CoordinatorEntity[TrackerCoordinator], TrackerEntity):
-    """Track the courier position."""
+class CourierTracker(SlotEntity, TrackerEntity):
+    """Track the courier position of one order."""
 
-    _attr_has_entity_name = True
     _attr_name = "送餐者"
 
-    def __init__(self, coordinator: TrackerCoordinator) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_courier"
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_unique_id = f"{DOMAIN}_courier_{slot}"
+        self._attr_device_info = slot_device_info(slot)
 
     @property
     def source_type(self) -> SourceType:
@@ -44,14 +48,14 @@ class CourierTracker(CoordinatorEntity[TrackerCoordinator], TrackerEntity):
     @property
     def latitude(self) -> float | None:
         """Return the latitude of the courier."""
-        data = self.coordinator.data or {}
-        return data.get("latitude")
+        data = self.slot_data
+        return data.get("latitude") if data else None
 
     @property
     def longitude(self) -> float | None:
         """Return the longitude of the courier."""
-        data = self.coordinator.data or {}
-        return data.get("longitude")
+        data = self.slot_data
+        return data.get("longitude") if data else None
 
     @property
     def location_accuracy(self) -> int:
@@ -61,7 +65,9 @@ class CourierTracker(CoordinatorEntity[TrackerCoordinator], TrackerEntity):
     @property
     def extra_state_attributes(self) -> dict:
         """Return the courier and order details."""
-        data = self.coordinator.data or {}
+        data = self.slot_data
+        if not data:
+            return {}
         courier = data.get("courier") or {}
         return {
             "courier_name": courier.get("name") or None,
@@ -71,4 +77,5 @@ class CourierTracker(CoordinatorEntity[TrackerCoordinator], TrackerEntity):
             ATTR_RESTAURANT: data.get("restaurant"),
             "distance_meters": data.get("distance_m"),
             "eta_estimate_minutes": data.get("eta_estimate"),
+            "eta_minutes": data.get("eta_minutes"),
         }

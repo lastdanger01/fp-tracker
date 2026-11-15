@@ -27,17 +27,13 @@ import requests
 
 from .const import (
     API_HOSTS,
-    ARRIVED_DISTANCE_M,
     AVERAGE_SPEED_KMH,
-    CONF_CLIENT_ID,
     CONF_DEVICE_TOKEN,
-    CONF_LOCALCODE,
     CONF_REFRESH_TOKEN,
-    CONF_SESSION_ID,
     CONF_TOKEN,
-    CONF_USER_SOURCE,
     LOGIN_HOSTS,
     REQUEST_TIMEOUT,
+    STATE_ACCEPTED,
     STATE_ARRIVED,
     STATE_CANCELLED,
     STATE_DELIVERED,
@@ -52,6 +48,9 @@ _LOGGER = logging.getLogger(__name__)
 
 # Distance between two points on the earth surface, in meters.
 EARTH_RADIUS_M = 6_371_000.0
+
+# Used as the sort key for orders without a usable timestamp.
+_MIN_TIME = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -120,16 +119,142 @@ def derive_state(order: dict) -> str:
         return STATE_DELIVERED
     if flags.get("is_picked_up"):
         return STATE_PICKED_UP
+
+    blob = _status_blob(order)
+
+    # The flags do not always keep up with the status message. A courier
+    # that already picked the order up can still have
+    # `is_picked_up: false` for a while, so the message is checked too.
+    if "PICKED" in blob or "ON_THE_WAY" in blob or "ON_WAY" in blob:
+        return STATE_PICKED_UP
+    if "ARRIVED" in blob:
+        return STATE_ARRIVED
+    if "DELIVERED" in blob:
+        return STATE_DELIVERED
+
     if flags.get("is_active"):
         # An active order that was not picked up yet is still at the
         # restaurant. The API does not tell apart "accepted" from
-        # "preparing" through the flags, so the status code is checked
-        # for that distinction.
-        code = (order.get("current_status") or {}).get("code")
-        if code in (7, 8, 9, 10, 11):
+        # "preparing" through the flags, so the status strings are
+        # checked for that distinction.
+        #
+        # Two different vocabularies are in play at the same time:
+        #
+        # - the order history says "RESTAURANTS_OTP_OD_PROGRESS_PREPARING"
+        # - the tracking endpoint says
+        #   "shop.order.status.message_order_accepted_by_vendor"
+        #
+        # Both describe the same phase, and the history uses the
+        # "PREPARING" wording, so it wins.
+        if "PREPARING" in blob or "COOKING" in blob:
             return STATE_PREPARING
+        if "ACCEPTED_BY_VENDOR" in blob:
+            # The tracking endpoint labels the very same phase as
+            # "accepted by vendor" while the order history calls it
+            # "preparing". They share the status code, so this is the
+            # same moment, not an earlier one.
+            return STATE_PREPARING
+        if "ACCEPTED" in blob:
+            return STATE_ACCEPTED
         return STATE_PREPARING
     return STATE_UNKNOWN
+
+
+def _status_blob(order: dict) -> str:
+    """Return the upper cased status strings of an order.
+
+    The order history and the tracking endpoint describe the same
+    phase with different wording, so both are collected and searched
+    together.
+    """
+    parts: list[str] = []
+    for key in ("current_status", "status"):
+        value = order.get(key)
+        if isinstance(value, dict):
+            for field in ("message", "internal_status_code"):
+                text = value.get(field)
+                if isinstance(text, str):
+                    parts.append(text)
+        elif isinstance(value, str):
+            parts.append(value)
+
+    for entry in order.get("status_history") or []:
+        if isinstance(entry, dict):
+            for field in ("message", "internal_status_code"):
+                text = entry.get(field)
+                if isinstance(text, str):
+                    parts.append(text)
+
+    return " ".join(parts).upper()
+
+
+def _extract_eta_minutes(order: dict) -> int | None:
+    """Return the ETA in minutes reported by the API.
+
+    The API exposes the ETA in several places and not all of them are
+    filled in:
+
+    - `eta` is an integer number of minutes, the most reliable one
+    - `delivery_time_range.median` is a string, empty while the order is
+      still being prepared
+    - `delivery_time_range.lower` / `upper` are the bounds of the range
+    - `live_activity.delivery_time.range` looks like "10 — 20"
+
+    They are tried in that order.
+    """
+    eta = order.get("eta")
+    if isinstance(eta, (int, float)) and not isinstance(eta, bool):
+        return int(eta)
+    if isinstance(eta, str) and eta.strip():
+        try:
+            return int(eta.strip())
+        except ValueError:
+            pass
+
+    eta_range = order.get("delivery_time_range")
+    if isinstance(eta_range, dict):
+        for field in ("median", "lower", "upper"):
+            value = eta_range.get(field)
+            try:
+                if value not in (None, ""):
+                    return int(value)
+            except (TypeError, ValueError):
+                continue
+
+    live = order.get("live_activity")
+    if isinstance(live, dict):
+        for key in ("delivery_time", "compact_delivery_time"):
+            block = live.get(key)
+            if not isinstance(block, dict):
+                continue
+            value = block.get("range")
+            if not isinstance(value, str):
+                continue
+            # "10 — 20" or "10 - 20" -> take the lower bound.
+            head = value.split("—")[0].split("-")[0].strip()
+            try:
+                if head:
+                    return int(head)
+            except ValueError:
+                continue
+
+    return None
+
+
+def _extract_delivery_address(order: dict) -> dict:
+    """Return the latitude and longitude of the delivery address."""
+    for key in ("delivery_address", "order_address", "last_delivery_address"):
+        address = order.get(key)
+        if not isinstance(address, dict):
+            continue
+        lat = address.get("latitude")
+        lon = address.get("longitude")
+        try:
+            if lat is not None and lon is not None:
+                return {"latitude": float(lat), "longitude": float(lon)}
+        except (TypeError, ValueError):
+            continue
+    return {"latitude": None, "longitude": None}
 
 
 def _extract_courier(order: dict) -> dict:
@@ -150,7 +275,7 @@ def _extract_courier(order: dict) -> dict:
 
     return {
         "name": courier.get("name") or "",
-        "phone": courier.get("phone") or "",
+        "phone": courier.get("phone") or courier.get("phone_number") or "",
         "vehicle": vehicle if isinstance(vehicle, str) else "",
         "latitude": lat,
         "longitude": lon,
@@ -249,14 +374,16 @@ class FoodpandaClient:
             return []
         return items
 
-    async def async_get_active_order(self) -> dict | None:
-        """Return the order that is currently in progress, if any.
+    async def async_get_active_orders(self) -> list[dict]:
+        """Return every order that is currently in progress.
 
         An order is in progress while it is active and neither delivered
-        nor cancelled.
+        nor cancelled. There can be more than one of those at a time,
+        for example when two orders are placed in a row.
         """
         orders = await self.async_get_orders()
 
+        active: list[dict] = []
         for order in orders:
             flags = order.get("status_flags") or {}
             if not isinstance(flags, dict):
@@ -266,16 +393,28 @@ class FoodpandaClient:
             if flags.get("is_completed"):
                 continue
             if flags.get("is_active"):
-                return order
+                active.append(order)
+                continue
 
-        # Some orders are marked active only by their status code, so
-        # fall back to the state derived from the flags.
-        for order in orders:
-            state = derive_state(order)
-            if state in (STATE_PREPARING, STATE_PICKED_UP, STATE_ARRIVED):
-                return order
+            # Some orders are marked active only by their status code, so
+            # fall back to the state derived from the flags.
+            if derive_state(order) in (STATE_PREPARING, STATE_ACCEPTED, STATE_PICKED_UP, STATE_ARRIVED):
+                active.append(order)
 
-        return None
+        # Oldest first: the first order is the one that arrives first.
+        # `ordered_at` is a dict, so it has to be parsed before it can
+        # be compared.
+        active.sort(key=lambda o: _parse_api_datetime(o.get("ordered_at")) or _MIN_TIME)
+        return active
+
+    async def async_get_active_order(self) -> dict | None:
+        """Return the order that is currently in progress, if any.
+
+        This is the oldest active order. Use `async_get_active_orders`
+        to track every order at once.
+        """
+        active = await self.async_get_active_orders()
+        return active[0] if active else None
 
     async def async_get_tracking(self, order_code: str) -> dict:
         """Return the live tracking data for one order."""
@@ -289,7 +428,8 @@ class FoodpandaClient:
         """Refresh the access token. Returns True on success.
 
         The refresh rotates the refresh token, so the caller has to
-        persist the new value.
+        persist the new value. `async_get_credentials` returns the
+        current credentials for that.
         """
         payload = {
             "country": self.localcode,
@@ -312,6 +452,7 @@ class FoodpandaClient:
                 timeout=REQUEST_TIMEOUT,
             )
 
+        last_status = 0
         for agent in (USER_AGENT_MOBILE, USER_AGENT_DESKTOP):
             try:
                 response = await self.hass.async_add_executor_job(
@@ -320,6 +461,8 @@ class FoodpandaClient:
             except requests.exceptions.RequestException as err:
                 _LOGGER.warning("refresh token 失敗：%s", err)
                 return False
+
+            last_status = response.status_code
 
             if response.status_code == HTTPStatus.OK:
                 cookies = _parse_set_cookies(response)
@@ -341,8 +484,25 @@ class FoodpandaClient:
                 )
                 return True
 
-        _LOGGER.warning("refresh token 失敗，HTTP %s", response.status_code)
+        _LOGGER.warning("refresh token 失敗，HTTP %s", last_status)
         return False
+
+    def async_get_credentials(self) -> dict:
+        """Return the credentials, so they can be persisted.
+
+        The access token is short lived, so a refreshed one has to be
+        written back to the config entry. Without that the integration
+        would run on an expired token after every restart.
+        """
+        return {
+            CONF_TOKEN: self.token,
+            CONF_DEVICE_TOKEN: self.device_token,
+            CONF_REFRESH_TOKEN: self.refresh_token,
+            CONF_CLIENT_ID: self.client_id,
+            CONF_SESSION_ID: self.session_id,
+            CONF_USER_SOURCE: self.user_source,
+            CONF_LOCALCODE: self.localcode,
+        }
 
 
 def _parse_set_cookies(response: requests.Response) -> dict:
@@ -389,24 +549,17 @@ def estimate_eta_minutes(distance_m: float | None) -> int | None:
 
 
 def courier_distance_m(
-    courier: dict, vendor: dict, home: tuple[float, float] | None
+    courier: dict, targets: list[tuple[float, float]]
 ) -> float | None:
-    """Return the distance of the courier to the delivery address."""
+    """Return the distance of the courier to the closest target point.
+
+    The targets are the delivery address and, as a fallback, the
+    restaurant. The courier is heading to the delivery address, so that
+    is the distance that matters.
+    """
     lat = courier.get("latitude")
     lon = courier.get("longitude")
     if lat is None or lon is None:
-        return None
-
-    targets = []
-    if home:
-        targets.append(home)
-    else:
-        vlat = vendor.get("latitude")
-        vlon = vendor.get("longitude")
-        if vlat is not None and vlon is not None:
-            targets.append((float(vlat), float(vlon)))
-
-    if not targets:
         return None
 
     best = None

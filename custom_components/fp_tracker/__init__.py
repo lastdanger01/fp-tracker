@@ -7,11 +7,10 @@ what stage the order is in, and how long until it arrives.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME, CONF_USERNAME, Platform
+from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
@@ -28,10 +27,12 @@ from .const import (
     DEFAULT_LOCALCODE,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MAX_ORDERS,
     PLATFORMS,
     STATE_LABELS,
 )
 from .coordinator import TrackerCoordinator
+from .credentials import async_load_credentials
 from .notify import async_setup_notifications
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,6 +58,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     data = {**entry.data, **entry.options}
 
+    # The refreshed credentials live in a store of their own, so they
+    # survive a restart without touching the config entry.
+    stored = await async_load_credentials(hass, entry.entry_id)
+    if stored:
+        data.update({k: v for k, v in stored.items() if v})
+
     client = FoodpandaClient(
         hass,
         localcode=data.get(CONF_LOCALCODE, DEFAULT_LOCALCODE),
@@ -73,9 +80,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = TrackerCoordinator(
         hass,
         client,
+        entry=entry,
         home_lat=data.get("home_latitude"),
         home_lon=data.get("home_longitude"),
         scan_interval=scan_interval,
+        max_orders=MAX_ORDERS,
     )
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -121,16 +130,17 @@ def _register_services(hass: HomeAssistant) -> None:
         title = call.data.get("title", "foodpanda 配送狀態")
         for coordinator in hass.data.get(DOMAIN, {}).values():
             data = coordinator.data or {}
-            if not data.get("active"):
-                continue
-            if message is None:
-                message = _build_message(data)
-            await hass.services.async_call(
-                "notify",
-                "send_message",
-                {"message": message, "title": title},
-                blocking=False,
-            )
+            for order in data.get("orders") or []:
+                if message is None:
+                    text = _build_message(order)
+                else:
+                    text = message
+                await hass.services.async_call(
+                    "notify",
+                    "send_message",
+                    {"message": text, "title": title},
+                    blocking=False,
+                )
 
     hass.services.async_register(DOMAIN, SERVICE_REFRESH, _refresh)
     hass.services.async_register(DOMAIN, SERVICE_NOTIFY, _notify)

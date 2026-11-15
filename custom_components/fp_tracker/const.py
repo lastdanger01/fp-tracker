@@ -37,6 +37,14 @@ CONF_SCAN_INTERVAL = "scan_interval"
 DEFAULT_LOCALCODE = "tw"
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
 
+# How many orders are tracked at the same time. Every order gets its
+# own set of entities in its own slot, so the entity ids stay stable
+# and do not pile up in the entity registry.
+MAX_ORDERS = 3
+
+# The name of the device that holds the entities of one order slot.
+SLOT_DEVICE_NAME = "foodpanda 訂單"
+
 # The bot protection in front of the foodpanda API looks at the TLS
 # fingerprint of the client. aiohttp is rejected with HTTP 403 and a
 # captcha challenge, requests gets through. Both user agents are kept:
@@ -56,10 +64,12 @@ API_HOSTS = {
     "hk": "https://hk.fd-api.com",
     "sg": "https://sg.fd-api.com",
 }
+# The login and refresh endpoints live under `/login/new/api`. Without
+# that path the API answers HTTP 404 ("Cannot POST /refresh-token").
 LOGIN_HOSTS = {
-    "tw": "https://www.foodpanda.com.tw",
-    "hk": "https://www.foodpanda.hk",
-    "sg": "https://www.foodpanda.sg",
+    "tw": "https://www.foodpanda.com.tw/login/new/api",
+    "hk": "https://www.foodpanda.hk/login/new/api",
+    "sg": "https://www.foodpanda.com.sg/login/new/api",
 }
 
 REQUEST_TIMEOUT = 25

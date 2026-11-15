@@ -1,44 +1,37 @@
-"""Data update coordinator for the fp_tracker integration."""
+"""Data update coordinator for the fp_tracker integration.
+
+The coordinator keeps the state of every order that is currently in
+progress. There can be more than one of those at a time, so the data
+is a list of orders, oldest first.
+"""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
     FoodpandaApiError,
     FoodpandaClient,
+    _extract_courier,
+    _extract_delivery_address,
+    _extract_eta_minutes,
+    _parse_api_datetime,
     courier_distance_m,
     derive_state,
     estimate_eta_minutes,
-    _extract_courier,
-    _parse_api_datetime,
 )
 from .const import (
-    ATTR_ETA,
-    ATTR_ETA_ESTIMATE,
-    ATTR_LAST_UPDATED,
-    ATTR_RESTAURANT,
-    ATTR_STATUS,
-    ATTR_STATUS_CODE,
-    ATTR_VENDOR_LAT,
-    ATTR_VENDOR_LON,
-    CONF_CLIENT_ID,
-    CONF_DEVICE_TOKEN,
-    CONF_LOCALCODE,
-    CONF_REFRESH_TOKEN,
-    CONF_SESSION_ID,
-    CONF_TOKEN,
-    CONF_USER_SOURCE,
-    DEFAULT_LOCALCODE,
+    ARRIVED_DISTANCE_M,
     DOMAIN,
     STATE_ARRIVED,
     STATE_LABELS,
 )
+from .credentials import async_save_credentials
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,16 +68,40 @@ async def async_get_access_token(hass: HomeAssistant) -> str:
     raise UpdateFailed("無法取得有效的 access token")
 
 
+def _empty_order() -> dict:
+    """Return the shape of an order slot that has no order in it."""
+    return {
+        "order_code": None,
+        "state": None,
+        "label": None,
+        "status_code": None,
+        "restaurant": "",
+        "courier": {},
+        "eta_minutes": None,
+        "eta_estimate": None,
+        "distance_m": None,
+        "latitude": None,
+        "longitude": None,
+        "vendor_latitude": None,
+        "vendor_longitude": None,
+        "delivery_latitude": None,
+        "delivery_longitude": None,
+        "changed_at": None,
+    }
+
+
 class TrackerCoordinator(DataUpdateCoordinator):
-    """Poll the foodpanda API and keep the current delivery state."""
+    """Poll the foodpanda API and keep the current delivery states."""
 
     def __init__(
         self,
         hass: HomeAssistant,
         client: FoodpandaClient,
+        entry: ConfigEntry | None = None,
         home_lat: float | None = None,
         home_lon: float | None = None,
         scan_interval: int = 30,
+        max_orders: int = 3,
     ) -> None:
         super().__init__(
             hass,
@@ -93,50 +110,62 @@ class TrackerCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=scan_interval),
         )
         self.client = client
+        self.entry = entry
         self.home_lat = home_lat
         self.home_lon = home_lon
-        self.last_state: str | None = None
-        self.last_order_code: str | None = None
+        self.max_orders = max_orders
 
-    async def _async_update_data(self) -> dict:
-        """Fetch the current delivery state."""
+    async def _async_fetch_orders(self) -> list[dict]:
+        """Return the active orders, refreshing the token when needed."""
         try:
-            order = await self.client.async_get_active_order()
+            return await self.client.async_get_active_orders()
         except FoodpandaApiError as err:
             # A dead token is worth one refresh attempt before giving up.
             if "過期" in str(err):
                 if await self.client.async_refresh_token():
+                    await self._async_persist_credentials()
                     try:
-                        order = await self.client.async_get_active_order()
+                        return await self.client.async_get_active_orders()
                     except FoodpandaApiError as err2:
                         raise UpdateFailed(str(err2)) from err2
-                else:
-                    raise UpdateFailed(str(err)) from err
-            else:
                 raise UpdateFailed(str(err)) from err
+            raise UpdateFailed(str(err)) from err
 
-        if not order:
-            self.last_state = None
-            self.last_order_code = None
-            return {
-                "active": False,
-                "state": None,
-                "label": None,
-                "order_code": None,
-                "courier": {},
-                "vendor": {},
-                "eta_minutes": None,
-                "eta_estimate": None,
-                "distance_m": None,
-                "latitude": None,
-                "longitude": None,
-                "vendor_latitude": None,
-                "vendor_longitude": None,
-                "status_code": None,
-                "changed_at": None,
-                "last_updated": datetime.now(timezone.utc).isoformat(),
-            }
+    async def _async_persist_credentials(self) -> None:
+        """Write the refreshed credentials to the credential store.
 
+        The access token is short lived, so without this the
+        integration would come back with an expired token after every
+        restart of Home Assistant. The store is used instead of the
+        config entry because writing to the config entry would trigger
+        the update listener and tear down the running coordinator.
+        """
+        if self.entry is None:
+            return
+        try:
+            await async_save_credentials(
+                self.hass, self.entry.entry_id, self.client.async_get_credentials()
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("寫回憑證失敗：%s", err)
+
+    async def _async_update_data(self) -> dict:
+        """Fetch the current delivery states of every active order."""
+        orders = await self._async_fetch_orders()
+
+        slots: list[dict] = []
+        for order in orders[: self.max_orders]:
+            slots.append(await self._async_build_slot(order))
+
+        return {
+            "active": bool(slots),
+            "count": len(slots),
+            "orders": slots,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _async_build_slot(self, order: dict) -> dict:
+        """Turn one API order into the data an entity needs."""
         order_code = order.get("order_code") or ""
         state = derive_state(order)
 
@@ -161,32 +190,21 @@ class TrackerCoordinator(DataUpdateCoordinator):
         vendor_lat = vendor.get("latitude")
         vendor_lon = vendor.get("longitude")
 
-        home = None
+        # The courier is heading to the delivery address, so that is the
+        # point the distance is measured to. The home coordinates from
+        # the config entry are only used when the API has no address.
+        address = _extract_delivery_address(merged)
+        targets: list[tuple[float, float]] = []
+        if address["latitude"] is not None and address["longitude"] is not None:
+            targets.append((address["latitude"], address["longitude"]))
         if self.home_lat is not None and self.home_lon is not None:
-            home = (self.home_lat, self.home_lon)
+            targets.append((self.home_lat, self.home_lon))
+        if not targets and vendor_lat is not None and vendor_lon is not None:
+            targets.append((float(vendor_lat), float(vendor_lon)))
 
-        distance = courier_distance_m(courier, vendor, home)
+        distance = courier_distance_m(courier, targets)
         eta_estimate = estimate_eta_minutes(distance)
-
-        eta_minutes = None
-        eta_range = merged.get("delivery_time_range") or {}
-        if isinstance(eta_range, dict):
-            median = eta_range.get("median")
-            try:
-                if median not in (None, ""):
-                    eta_minutes = int(median)
-            except (TypeError, ValueError):
-                eta_minutes = None
-        if eta_minutes is None:
-            live = merged.get("live_activity") or {}
-            if isinstance(live, dict):
-                delivery_time = live.get("delivery_time") or {}
-                if isinstance(delivery_time, dict):
-                    try:
-                        if delivery_time.get("range") not in (None, ""):
-                            eta_minutes = int(delivery_time["range"])
-                    except (TypeError, ValueError):
-                        eta_minutes = None
+        eta_minutes = _extract_eta_minutes(merged)
 
         # A courier that is close enough counts as arrived even when the
         # API has not flipped the flag yet.
@@ -196,20 +214,17 @@ class TrackerCoordinator(DataUpdateCoordinator):
         ):
             state = STATE_ARRIVED
 
-        changed_at = _parse_api_datetime(status.get("changedAt")) if isinstance(status, dict) else None
+        changed_at = (
+            _parse_api_datetime(status.get("changedAt")) if isinstance(status, dict) else None
+        )
 
         return {
-            "active": True,
+            "order_code": order_code,
             "state": state,
             "label": STATE_LABELS.get(state, state),
-            "order_code": order_code,
-            "courier": courier,
-            "vendor": {
-                "name": vendor.get("name") or "",
-                "latitude": vendor_lat,
-                "longitude": vendor_lon,
-            },
+            "status_code": status_code,
             "restaurant": vendor.get("name") or "",
+            "courier": courier,
             "eta_minutes": eta_minutes,
             "eta_estimate": eta_estimate,
             "distance_m": distance,
@@ -217,8 +232,7 @@ class TrackerCoordinator(DataUpdateCoordinator):
             "longitude": courier.get("longitude"),
             "vendor_latitude": vendor_lat,
             "vendor_longitude": vendor_lon,
-            "status_code": status_code,
+            "delivery_latitude": address["latitude"],
+            "delivery_longitude": address["longitude"],
             "changed_at": changed_at.isoformat() if changed_at else None,
-            "last_updated": datetime.now(timezone.utc).isoformat(),
         }
-

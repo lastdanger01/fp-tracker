@@ -7,18 +7,17 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    ATTR_ETA_ESTIMATE,
     ATTR_ORDER_CODE,
     ATTR_RESTAURANT,
     ATTR_STATUS,
     ATTR_STATUS_CODE,
     DOMAIN,
-    STATE_LABELS,
+    MAX_ORDERS,
 )
 from .coordinator import TrackerCoordinator
+from .entity import SlotEntity, slot_device_info
 
 
 async def async_setup_entry(
@@ -29,33 +28,31 @@ async def async_setup_entry(
     """Set up the fp_tracker sensors."""
     coordinator: TrackerCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = [
-        TrackerStateSensor(coordinator),
-        TrackerEtaSensor(coordinator),
-        TrackerEtaEstimateSensor(coordinator),
-        TrackerDistanceSensor(coordinator),
-    ]
+    entities: list[SensorEntity] = []
+    for slot in range(MAX_ORDERS):
+        entities.extend(
+            [
+                TrackerStateSensor(coordinator, slot),
+                TrackerEtaSensor(coordinator, slot),
+                TrackerEtaEstimateSensor(coordinator, slot),
+                TrackerDistanceSensor(coordinator, slot),
+            ]
+        )
     async_add_entities(entities)
 
 
-class _BaseTrackerSensor(CoordinatorEntity[TrackerCoordinator], SensorEntity):
+class _BaseTrackerSensor(SlotEntity, SensorEntity):
     """Common base for the tracker sensors."""
 
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator: TrackerCoordinator) -> None:
-        super().__init__(coordinator)
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
         self._attr_attribution = "Powered by foodpanda"
+        self._attr_device_info = slot_device_info(slot)
 
     @property
-    def _data(self) -> dict:
-        """Return the coordinator data."""
-        return self.coordinator.data or {}
-
-    @property
-    def available(self) -> bool:
-        """Return True when the coordinator has data."""
-        return self.coordinator.last_update_success and self._data.get("active", False)
+    def _data(self) -> dict | None:
+        """Return the data of this slot."""
+        return self.slot_data
 
 
 class TrackerStateSensor(_BaseTrackerSensor):
@@ -64,17 +61,23 @@ class TrackerStateSensor(_BaseTrackerSensor):
     _attr_name = "配送狀態"
     _attr_icon = "mdi:food-delivery"
 
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_unique_id = f"{DOMAIN}_state_{slot}"
+
     @property
     def native_value(self) -> str | None:
         """Return the state label."""
-        return self._data.get("label")
+        data = self._data
+        return data.get("label") if data else None
 
     @property
     def extra_state_attributes(self) -> dict:
         """Return the order details."""
         data = self._data
+        if not data:
+            return {}
         courier = data.get("courier") or {}
-        vendor = data.get("vendor") or {}
         return {
             ATTR_STATUS: data.get("state"),
             ATTR_STATUS_CODE: data.get("status_code"),
@@ -83,8 +86,10 @@ class TrackerStateSensor(_BaseTrackerSensor):
             "courier_name": courier.get("name") or None,
             "courier_phone": courier.get("phone") or None,
             "courier_vehicle": courier.get("vehicle") or None,
-            "vendor_latitude": vendor.get("latitude"),
-            "vendor_longitude": vendor.get("longitude"),
+            "vendor_latitude": data.get("vendor_latitude"),
+            "vendor_longitude": data.get("vendor_longitude"),
+            "delivery_latitude": data.get("delivery_latitude"),
+            "delivery_longitude": data.get("delivery_longitude"),
             "changed_at": data.get("changed_at"),
         }
 
@@ -96,10 +101,15 @@ class TrackerEtaSensor(_BaseTrackerSensor):
     _attr_icon = "mdi:timer-outline"
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
 
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_unique_id = f"{DOMAIN}_eta_{slot}"
+
     @property
     def native_value(self) -> int | None:
         """Return the ETA in minutes."""
-        return self._data.get("eta_minutes")
+        data = self._data
+        return data.get("eta_minutes") if data else None
 
 
 class TrackerEtaEstimateSensor(_BaseTrackerSensor):
@@ -109,10 +119,15 @@ class TrackerEtaEstimateSensor(_BaseTrackerSensor):
     _attr_icon = "mdi:timer-sand"
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
 
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_unique_id = f"{DOMAIN}_eta_estimate_{slot}"
+
     @property
     def native_value(self) -> int | None:
         """Return the estimated minutes."""
-        return self._data.get("eta_estimate")
+        data = self._data
+        return data.get("eta_estimate") if data else None
 
 
 class TrackerDistanceSensor(_BaseTrackerSensor):
@@ -123,7 +138,12 @@ class TrackerDistanceSensor(_BaseTrackerSensor):
     _attr_device_class = SensorDeviceClass.DISTANCE
     _attr_native_unit_of_measurement = "m"
 
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_unique_id = f"{DOMAIN}_distance_{slot}"
+
     @property
     def native_value(self) -> float | None:
         """Return the distance in meters."""
-        return self._data.get("distance_m")
+        data = self._data
+        return data.get("distance_m") if data else None

@@ -9,10 +9,10 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, MAX_ORDERS, STATE_ARRIVED
 from .coordinator import TrackerCoordinator
+from .entity import SlotEntity, slot_device_info
 
 
 async def async_setup_entry(
@@ -22,26 +22,24 @@ async def async_setup_entry(
 ) -> None:
     """Set up the fp_tracker binary sensors."""
     coordinator: TrackerCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
-            ActiveOrderSensor(coordinator),
-            CourierNearbySensor(coordinator),
-        ]
-    )
+
+    entities: list[BinarySensorEntity] = []
+    for slot in range(MAX_ORDERS):
+        entities.extend(
+            [
+                ActiveOrderSensor(coordinator, slot),
+                CourierNearbySensor(coordinator, slot),
+            ]
+        )
+    async_add_entities(entities)
 
 
-class _BaseBinary(CoordinatorEntity[TrackerCoordinator], BinarySensorEntity):
+class _BaseBinary(SlotEntity, BinarySensorEntity):
     """Common base for the binary sensors."""
 
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator: TrackerCoordinator) -> None:
-        super().__init__(coordinator)
-
-    @property
-    def _data(self) -> dict:
-        """Return the coordinator data."""
-        return self.coordinator.data or {}
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_device_info = slot_device_info(slot)
 
 
 class ActiveOrderSensor(_BaseBinary):
@@ -50,10 +48,14 @@ class ActiveOrderSensor(_BaseBinary):
     _attr_name = "配送中"
     _attr_icon = "mdi:food-delivery"
 
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_unique_id = f"{DOMAIN}_active_{slot}"
+
     @property
     def is_on(self) -> bool:
-        """Return True when an order is in progress."""
-        return bool(self._data.get("active"))
+        """Return True when this slot holds an order."""
+        return self.slot_data is not None
 
 
 class CourierNearbySensor(_BaseBinary):
@@ -63,7 +65,12 @@ class CourierNearbySensor(_BaseBinary):
     _attr_icon = "mdi:map-marker-radius"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_unique_id = f"{DOMAIN}_nearby_{slot}"
+
     @property
     def is_on(self) -> bool:
         """Return True when the courier is near."""
-        return self._data.get("state") == "arrived"
+        data = self.slot_data
+        return bool(data) and data.get("state") == STATE_ARRIVED
