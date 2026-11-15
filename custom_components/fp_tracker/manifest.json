@@ -1,12 +1,19 @@
 {
   "domain": "fp_tracker",
   "name": "foodpanda 即時追蹤",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "documentation": "https://github.com/lastdanger01/fp-tracker",
   "issue_tracker": "https://github.com/lastdanger01/fp-tracker/issues",
-  "codeowners": ["@lastdanger01"],
+  "codeowners": [
+    "@lastdanger01"
+  ],
   "config_flow": true,
-  "dependencies": ["device_tracker", "notify"],
-  "requirements": ["requests"],
+  "dependencies": [
+    "device_tracker",
+    "notify"
+  ],
+  "requirements": [
+    "requests"
+  ],
   "iot_class": "cloud_polling"
 }
