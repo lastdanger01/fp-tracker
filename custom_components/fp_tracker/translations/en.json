@@ -16,7 +16,8 @@
       }
     },
     "error": {
-      "token_required": "The token cannot be empty."
+      "token_required": "The token cannot be empty.",
+      "token_invalid": "The token is invalid or expired. Please check it and paste it again."
     },
     "abort": {
       "already_configured": "This token is already configured."

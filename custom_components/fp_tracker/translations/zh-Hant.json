@@ -16,7 +16,8 @@
       }
     },
     "error": {
-      "token_required": "Token 不能空白。"
+      "token_required": "Token 不能空白。",
+      "token_invalid": "Token 無效或已過期，請確認後重新貼上。"
     },
     "abort": {
       "already_configured": "這個 token 已經設定過了。"

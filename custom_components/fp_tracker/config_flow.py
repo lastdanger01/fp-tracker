@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -51,7 +52,36 @@ def _schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
+async def _async_token_works(hass: Any, user_input: dict[str, Any]) -> bool:
+    """Check the token against the foodpanda API.
+
+    A broken token would otherwise only show up later as a coordinator
+    that never updates.
+    """
+    from .api import FoodpandaApiError, FoodpandaClient
+
+    client = FoodpandaClient(
+        hass,
+        localcode=user_input.get(CONF_LOCALCODE, DEFAULT_LOCALCODE),
+        token=str(user_input.get(CONF_TOKEN, "") or "").strip(),
+        device_token=user_input.get(CONF_DEVICE_TOKEN, ""),
+        refresh_token=user_input.get(CONF_REFRESH_TOKEN, ""),
+        client_id=user_input.get(CONF_CLIENT_ID, ""),
+        session_id=user_input.get(CONF_SESSION_ID, ""),
+        user_source=user_input.get(CONF_USER_SOURCE, ""),
+    )
+
+    try:
+        await client.async_get_orders()
+    except FoodpandaApiError:
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
 class FpTrackerConfigFlow(ConfigFlow, domain=DOMAIN):
+
     """Handle the fp_tracker config flow."""
 
     VERSION = 1
@@ -63,20 +93,32 @@ class FpTrackerConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            token = user_input.get(CONF_TOKEN, "").strip()
+            token = str(user_input.get(CONF_TOKEN, "") or "").strip()
             if not token:
                 errors[CONF_TOKEN] = "token_required"
+            else:
+                # Verify the token against the API before saving it, so a
+                # typo does not end up as a broken config entry.
+                if not await _async_token_works(self.hass, user_input):
+                    errors[CONF_TOKEN] = "token_invalid"
 
-        if errors:
-            return self.async_show_form(
-                step_id="user", data_schema=_schema(user_input or {}), errors=errors
+        if not errors and user_input is not None:
+            # The unique id is derived from the token, but the token
+            # itself must never end up in the flow id, so only a
+            # hash of it is used.
+            await self.async_set_unique_id(
+                hashlib.sha256(str(user_input[CONF_TOKEN]).strip().encode()).hexdigest()
             )
+            self._abort_if_unique_id_configured()
 
-        await self.async_set_unique_id(user_input[CONF_TOKEN][:64])
-        self._abort_if_unique_id_configured()
+            title = f"foodpanda ({user_input.get(CONF_LOCALCODE, DEFAULT_LOCALCODE)})"
+            return self.async_create_entry(title=title, data=user_input)
 
-        title = f"foodpanda ({user_input.get(CONF_LOCALCODE, DEFAULT_LOCALCODE)})"
-        return self.async_create_entry(title=title, data=user_input)
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_schema(user_input or {}),
+            errors=errors,
+        )
 
     @staticmethod
     @callback
