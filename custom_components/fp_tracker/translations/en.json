@@ -3,21 +3,25 @@
     "step": {
       "user": {
         "title": "foodpanda live tracker",
-        "description": "Paste your foodpanda tokens. They can be found in the browser after logging in: F12 → Application → Cookies → www.foodpanda.com. The device_token is in the JWT payload of the access token.",
+        "description": "Paste your foodpanda tokens. They can be found in the browser after logging in: F12 → Application → Cookies → www.foodpanda.com (the token, device_token, refresh_token and userSource cookies).",
         "data": {
           "token": "Access token",
           "device_token": "Device token",
           "refresh_token": "Refresh token",
           "client_id": "Perseus Client Id (optional)",
           "session_id": "Perseus Session Id (optional)",
-          "user_source": "User Source (optional)",
+          "user_source": "User Source (required, use volo)",
           "localcode": "Country code"
         }
       }
     },
     "error": {
       "token_required": "The token cannot be empty.",
-      "token_invalid": "The token is invalid or expired. Please check it and paste it again."
+      "token_invalid": "The token is invalid or expired (the API answered 401). Please log in to foodpanda again and paste a fresh token.",
+      "token_forbidden": "The API rejected the request (HTTP 403). Please check that the user source is filled in and that the country code is right.",
+      "token_is_device_token": "This is a device token, not an access token. Please paste the token cookie into this field and the device_token cookie into the Device token field.",
+      "user_source_required": "The user source cannot be empty. Use volo.",
+      "cannot_connect": "The foodpanda API could not be reached. Please check the network and try again."
     },
     "abort": {
       "already_configured": "This token is already configured."
@@ -33,7 +37,7 @@
           "refresh_token": "Refresh token",
           "client_id": "Perseus Client Id (optional)",
           "session_id": "Perseus Session Id (optional)",
-          "user_source": "User Source (optional)",
+          "user_source": "User Source (required, use volo)",
           "localcode": "Country code"
         }
       }

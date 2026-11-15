@@ -20,10 +20,19 @@ To avoid that, this integration reads and writes the credential file
 of the older integration (`foodpanda/tokens.json`), so the whole
 system only ever holds one refresh token. Its own store stays as a
 fallback for the case where the older integration is not installed.
+
+The shared file is only used when it holds the *newer* credentials. A
+leftover file from an older installation can hold a token that expired
+long ago, and adopting it would throw away a perfectly good token that
+the user just pasted into the config flow. The comparison is done on
+the expiry of the access token, so a token that was refreshed later
+always wins.
 """
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 from typing import Any
 
@@ -83,6 +92,71 @@ def _normalize(entry: dict[str, Any]) -> dict[str, Any]:
         CONF_LOCALCODE: entry.get(CONF_LOCALCODE, "tw") or "tw",
         CONF_TOKEN_TIMEOUT: entry.get(CONF_TOKEN_TIMEOUT, 0) or 0,
     }
+
+
+def _jwt_expiry(token: str) -> int:
+    """Return the expiry of an access token, or 0 when it cannot be read.
+
+    The access token is a JWT whose payload carries the expiry as
+    "expires" (in seconds since the epoch). The device token uses the
+    usual "exp" instead, but only the access token is compared here.
+    """
+    if not token:
+        return 0
+    parts = token.split(".")
+    if len(parts) < 2:
+        return 0
+    segment = parts[1]
+    segment += "=" * (-len(segment) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(segment))
+    except (ValueError, TypeError):
+        return 0
+    for key in ("expires", "exp"):
+        value = payload.get(key)
+        if isinstance(value, (int, float)):
+            return int(value)
+    return 0
+
+
+def credentials_expiry(credentials: dict[str, Any]) -> int:
+    """Return the expiry of the access token in a set of credentials."""
+    expiry = _jwt_expiry(str(credentials.get(CONF_TOKEN, "") or ""))
+    if expiry:
+        return expiry
+    try:
+        return int(credentials.get(CONF_TOKEN_TIMEOUT, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def shared_credentials_are_newer(
+    shared: dict[str, Any], current: dict[str, Any]
+) -> bool:
+    """Say whether the shared credentials should replace the current ones.
+
+    The shared file is written by the older foodpanda integration, but
+    it can also be a leftover from an installation that is long gone.
+    A token that expired in the past must not replace a token the user
+    just pasted into the config flow, so the newer expiry wins.
+    """
+    shared_token = str(shared.get(CONF_TOKEN, "") or "")
+    if not shared_token:
+        return False
+
+    current_token = str(current.get(CONF_TOKEN, "") or "")
+    if not current_token:
+        return True
+
+    if shared_token == current_token:
+        return False
+
+    shared_expiry = credentials_expiry(shared)
+    current_expiry = credentials_expiry(current)
+
+    # An expiry that cannot be read is treated as the oldest possible
+    # one, so a readable expiry always wins.
+    return shared_expiry > current_expiry
 
 
 async def async_load_credentials(

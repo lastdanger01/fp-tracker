@@ -35,7 +35,11 @@ from .const import (
     STATE_LABELS,
 )
 from .coordinator import TrackerCoordinator
-from .credentials import async_load_credentials, async_load_shared_credentials
+from .credentials import (
+    async_load_credentials,
+    async_load_shared_credentials,
+    shared_credentials_are_newer,
+)
 from .notify import SERVICE_GROUP, async_setup_notifications, escape_html
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,10 +76,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # A refresh token can only be used once, so two integrations that
     # keep their own copy of it end up invalidating each other. The
     # shared file holds the one copy that both of them use.
+    #
+    # The shared file is only adopted when it holds the newer token.
+    # A leftover file from an older installation can hold a token that
+    # expired long ago, and taking it would throw away a good token
+    # that the user just pasted into the config flow.
     account = str(data.get(CONF_USERNAME, "") or "") or None
     shared = await async_load_shared_credentials(hass, account)
-    if shared:
+    if shared and shared_credentials_are_newer(shared, data):
         data.update({k: v for k, v in shared.items() if v})
+    elif shared:
+        _LOGGER.debug("共用憑證檔比較舊，保留目前的憑證")
 
     client = FoodpandaClient(
         hass,

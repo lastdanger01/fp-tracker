@@ -64,23 +64,47 @@
 
 | 欄位 | 來源 |
 |------|------|
-| `token` | 瀏覽器登入 foodpanda → F12 → Application → Cookies → `www.foodpanda.com` → `access_token` |
+| `token` | 瀏覽器登入 foodpanda → F12 → Application → Cookies → `www.foodpanda.com` → `token` |
 | `refresh_token` | 同上，`refresh_token` |
-| `device_token` | access token 的 JWT payload 裡的 `device_token` 欄位 |
+| `device_token` | 同上，`device_token` |
+| `user_source` | 同上，`userSource`（台灣是 `volo`） |
 | `localcode` | 台灣填 `tw`（香港 `hk`、新加坡 `sg`） |
 
-另外三個 Perseus 欄位（`client_id`、`session_id`、`user_source`）是選填的，
-但填了會讓 API 回應更完整。
+`client_id` 與 `session_id` 是選填的，填了會讓 API 回應更完整；
+第一次 refresh 之後整合會自己從 cookie 補上。
 
-### 怎麼拿 device_token
+### user_source 一定要填
 
-access token 是 JWT，把中間那段用 base64 解開就能看到：
+少了 `user_source`，foodpanda API 會回 **HTTP 403**，設定流程會直接失敗。
+它送出去的是 `X-Fp-Api-Key` 這個 header，而 **header 的值不重要，有這個 header 就行** ——
+填 `volo` 就對了。
 
-```bash
-echo "<token 的第二段>" | base64 -d | python3 -m json.tool
-```
+### 怎麼拿這些 token
 
-裡面的 `device_token` 就是需要的值。
+四個值都在瀏覽器的 cookie 裡：
+
+1. 用 Chrome 或 Edge 登入 foodpanda
+2. `F12` → **Application** 分頁
+3. 左邊 **Storage → Cookies → `https://www.foodpanda.com`**
+4. 上方 Filter 輸入 `token`（`userSource` 要另外搜一次）
+
+會看到這幾筆：
+
+| Cookie 名稱 | 填到哪個欄位 |
+|---|---|
+| `token` | token |
+| `device_token` | device_token |
+| `refresh_token` | refresh_token |
+| `userSource` | user_source |
+
+> ⚠️ `token` 和 `device_token` 長得很像，都是 JWT，貼錯欄位 API 只會回 401。
+> 一個快速檢查法：把值貼到終端機跑
+> `echo "<貼的那串>" | cut -d. -f1 | base64 -d`
+> 看到 `keymaker-volo-fp-tw` 是 access token，
+> 看到 `keymaker-volo-fp-device-tw` 是 device token（多一個 `-device-`）。
+
+> Cookie 值在 Chrome 的面板裡可能是 percent-encoded 的，
+> 值的內容裡不該出現 `%` 或 `+`；有的話要先 decode 再貼。
 
 ## 用法
 

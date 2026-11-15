@@ -350,7 +350,20 @@ def summarize_products(products: list[dict]) -> tuple[str, int]:
 
 
 class FoodpandaApiError(Exception):
-    """Raised when the foodpanda API cannot be used."""
+    """Raised when the foodpanda API cannot be used.
+
+    The HTTP status code is kept so the caller can tell the failure
+    modes apart. They used to collapse into a single "token expired"
+    message, which sent people looking in the wrong place: a 401 means
+    the token really is dead, a 403 means the request was rejected
+    (usually a missing user source or the bot protection), and a
+    connection error means neither of those.
+    """
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        """Store the message and the HTTP status code."""
+        super().__init__(message)
+        self.status = status
 
 
 class FoodpandaClient:
@@ -426,9 +439,20 @@ class FoodpandaClient:
         response = await self.hass.async_add_executor_job(_call)
 
         if response.status_code == HTTPStatus.UNAUTHORIZED:
-            raise FoodpandaApiError("token 已過期，請重新登入")
+            raise FoodpandaApiError(
+                "token 已過期，請重新登入", status=response.status_code
+            )
+        if response.status_code == HTTPStatus.FORBIDDEN:
+            # 403 is not an expired token: the request was rejected. It
+            # happens when the user source header is missing, and when
+            # the bot protection in front of the API answers.
+            raise FoodpandaApiError(
+                "API 拒絕了這個請求（HTTP 403）", status=response.status_code
+            )
         if response.status_code != HTTPStatus.OK:
-            raise FoodpandaApiError(f"HTTP {response.status_code}")
+            raise FoodpandaApiError(
+                f"HTTP {response.status_code}", status=response.status_code
+            )
 
         try:
             return response.json()

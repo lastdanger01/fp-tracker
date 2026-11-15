@@ -39,6 +39,12 @@ CONF_SCAN_INTERVAL = "scan_interval"
 DEFAULT_LOCALCODE = "tw"
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
 
+# The API answers HTTP 403 when this header is missing, so the field is
+# not optional in practice: the value itself does not matter, it only
+# has to be there. The value is picked up from the cookies on the first
+# refresh anyway.
+DEFAULT_USER_SOURCE = "volo"
+
 # How many orders are tracked at the same time. Every order gets its
 # own set of entities in its own slot, so the entity ids stay stable
 # and do not pile up in the entity registry.

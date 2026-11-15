@@ -30,6 +30,8 @@ from .api import (
 )
 from .const import (
     ARRIVED_DISTANCE_M,
+    CONF_TOKEN,
+    CONF_TOKEN_TIMEOUT,
     DOMAIN,
     FINISHED_RETENTION_SECONDS,
     STATE_ARRIVED,
@@ -42,6 +44,7 @@ from .credentials import (
     async_load_shared_credentials,
     async_save_credentials,
     async_save_shared_credentials,
+    shared_credentials_are_newer,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -211,6 +214,18 @@ class TrackerCoordinator(DataUpdateCoordinator):
             return
 
         if shared.get("token") == self.client.token:
+            return
+
+        # The shared file is only adopted when it holds the newer
+        # token. A leftover file can hold a token that expired long
+        # ago, and taking it would replace a working token with a dead
+        # one.
+        current = {
+            CONF_TOKEN: self.client.token,
+            CONF_TOKEN_TIMEOUT: self.client.token_timeout,
+        }
+        if not shared_credentials_are_newer(shared, current):
+            _LOGGER.debug("共用憑證檔比較舊，保留目前的憑證")
             return
 
         self.client.token = shared.get("token") or self.client.token

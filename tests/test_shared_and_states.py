@@ -219,6 +219,80 @@ check(
     True,
 )
 
+# ------------------------------------------------ the shared file guard
+section("共用憑證檔不得覆蓋掉新 token")
+# The bug of 2026-11-15: a leftover foodpanda/tokens.json held a token
+# that expired in 2024, and it replaced the token the user had just
+# pasted into the config flow. The entry then failed with HTTP 401.
+#
+# A JWT whose payload carries the expiry, so the comparison has
+# something to look at.
+def make_token(expires: int) -> str:
+    """Return a fake access token with the given expiry."""
+    import base64 as _b64
+    import json as _json
+
+    def seg(data):
+        raw = _json.dumps(data).encode()
+        return _b64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    header = seg({"alg": "RS256", "kid": "keymaker-volo-fp-tw"})
+    payload = seg({"id": "x", "expires": expires})
+    return f"{header}.{payload}.sig"
+
+
+OLD_TOKEN = make_token(1728788770)   # expired in 2024
+NEW_TOKEN = make_token(1794748191)   # valid in 2026
+
+check(
+    "過期的共用憑證不會覆蓋新的 token",
+    credentials.shared_credentials_are_newer(
+        {"token": OLD_TOKEN}, {"token": NEW_TOKEN}
+    ),
+    False,
+)
+check(
+    "比較新的共用憑證會覆蓋舊的",
+    credentials.shared_credentials_are_newer(
+        {"token": NEW_TOKEN}, {"token": OLD_TOKEN}
+    ),
+    True,
+)
+check(
+    "目前沒有 token 時會採用共用憑證",
+    credentials.shared_credentials_are_newer({"token": NEW_TOKEN}, {"token": ""}),
+    True,
+)
+check(
+    "共用憑證沒有 token 時不採用",
+    credentials.shared_credentials_are_newer({"token": ""}, {"token": NEW_TOKEN}),
+    False,
+)
+check(
+    "同一組 token 不重複覆蓋",
+    credentials.shared_credentials_are_newer(
+        {"token": NEW_TOKEN}, {"token": NEW_TOKEN}
+    ),
+    False,
+)
+check(
+    "讀不到到期時間時以最舊處理",
+    credentials.shared_credentials_are_newer(
+        {"token": "not-a-jwt"}, {"token": NEW_TOKEN}
+    ),
+    False,
+)
+check(
+    "JWT 的 expires 有被讀到",
+    credentials._jwt_expiry(NEW_TOKEN),
+    1794748191,
+)
+check(
+    "沒有 token 時到期時間是 0",
+    credentials._jwt_expiry(""),
+    0,
+)
+
 print()
 if FAILURES:
     print(f"❌ {len(FAILURES)} 項失敗：{FAILURES}")

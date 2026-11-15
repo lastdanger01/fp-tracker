@@ -3,21 +3,25 @@
     "step": {
       "user": {
         "title": "foodpanda 即時追蹤",
-        "description": "貼上 foodpanda 的 token。這些值可以從瀏覽器登入 foodpanda 後，於 F12 → Application → Cookies → www.foodpanda.com 取得；device_token 則在 access token 的 JWT payload 中。",
+        "description": "貼上 foodpanda 的 token。這些值都可以從瀏覽器登入 foodpanda 後，於 F12 → Application → Cookies → www.foodpanda.com 取得（token、device_token、refresh_token、userSource 四個 cookie）。",
         "data": {
           "token": "Access token",
           "device_token": "Device token",
           "refresh_token": "Refresh token",
           "client_id": "Perseus Client Id（選填）",
           "session_id": "Perseus Session Id（選填）",
-          "user_source": "User Source（選填）",
+          "user_source": "User Source（必填，填 volo）",
           "localcode": "國家代碼"
         }
       }
     },
     "error": {
       "token_required": "Token 不能空白。",
-      "token_invalid": "Token 無效或已過期，請確認後重新貼上。"
+      "token_invalid": "Token 無效或已過期（API 回 401），請重新登入 foodpanda 後貼上新的 token。",
+      "token_forbidden": "API 拒絕了這個請求（HTTP 403）。請確認 user_source 有填、且國家代碼正確。",
+      "token_is_device_token": "這一欄貼的是 device token，不是 access token。請把 Cookie 裡的 token 貼到這裡，device token 貼到 Device token 欄。",
+      "user_source_required": "User Source 不能空白。台灣請填 volo。",
+      "cannot_connect": "連不到 foodpanda API，請檢查網路後再試一次。"
     },
     "abort": {
       "already_configured": "這個 token 已經設定過了。"
@@ -33,7 +37,7 @@
           "refresh_token": "Refresh token",
           "client_id": "Perseus Client Id（選填）",
           "session_id": "Perseus Session Id（選填）",
-          "user_source": "User Source（選填）",
+          "user_source": "User Source（必填，填 volo）",
           "localcode": "國家代碼"
         }
       }
