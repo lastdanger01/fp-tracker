@@ -172,6 +172,30 @@ async def async_load_credentials(
     return entry
 
 
+def stored_credentials_are_newer(
+    stored: dict[str, Any], current: dict[str, Any]
+) -> bool:
+    """Say whether the stored credentials should replace the current ones.
+
+    The store holds the credentials of the last refresh. A token the user
+    just pasted into the options flow is newer than that, so the store
+    must not throw it away. Otherwise the integration keeps running on
+    the old, dead token and the new one never takes effect.
+    """
+    stored_token = str(stored.get(CONF_TOKEN, "") or "")
+    if not stored_token:
+        return False
+
+    current_token = str(current.get(CONF_TOKEN, "") or "")
+    if not current_token:
+        return True
+
+    if stored_token == current_token:
+        return False
+
+    return credentials_expiry(stored) > credentials_expiry(current)
+
+
 async def async_save_credentials(
     hass: HomeAssistant, entry_id: str, credentials: dict[str, Any]
 ) -> None:

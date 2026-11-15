@@ -39,6 +39,7 @@ from .credentials import (
     async_load_credentials,
     async_load_shared_credentials,
     shared_credentials_are_newer,
+    stored_credentials_are_newer,
 )
 from .notify import SERVICE_GROUP, async_setup_notifications, escape_html
 
@@ -68,9 +69,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # The refreshed credentials live in a store of their own, so they
     # survive a restart without touching the config entry.
+    #
+    # The store is only adopted when it holds the newer token. A token
+    # the user just pasted into the options flow is newer than the
+    # store, so the store must not throw it away.
     stored = await async_load_credentials(hass, entry.entry_id)
-    if stored:
+    if stored and stored_credentials_are_newer(stored, data):
         data.update({k: v for k, v in stored.items() if v})
+    elif stored:
+        _LOGGER.debug("憑證檔比較舊，保留目前的憑證")
 
     # The credentials are shared with the older foodpanda integration.
     # A refresh token can only be used once, so two integrations that
