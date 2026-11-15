@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "foodpanda 即時追蹤",
+        "description": "貼上 foodpanda 的 token。這些值可以從瀏覽器登入 foodpanda 後，於 F12 → Application → Cookies → www.foodpanda.com 取得；device_token 則在 access token 的 JWT payload 中。",
+        "data": {
+          "token": "Access token",
+          "device_token": "Device token",
+          "refresh_token": "Refresh token",
+          "client_id": "Perseus Client Id（選填）",
+          "session_id": "Perseus Session Id（選填）",
+          "user_source": "User Source（選填）",
+          "localcode": "國家代碼"
+        }
+      }
+    },
+    "error": {
+      "token_required": "Token 不能空白。"
+    },
+    "abort": {
+      "already_configured": "這個 token 已經設定過了。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "foodpanda 即時追蹤",
+        "data": {
+          "token": "Access token",
+          "device_token": "Device token",
+          "refresh_token": "Refresh token",
+          "client_id": "Perseus Client Id（選填）",
+          "session_id": "Perseus Session Id（選填）",
+          "user_source": "User Source（選填）",
+          "localcode": "國家代碼"
+        }
+      }
+    }
+  }
+}

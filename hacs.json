@@ -1,0 +1,8 @@
+{
+    "name": "foodpanda 即時追蹤",
+    "render_readme": true,
+    "domain": "fp_tracker",
+    "documentation": "https://github.com/lastdanger01/fp-tracker",
+    "issue_tracker": "https://github.com/lastdanger01/fp-tracker/issues",
+    "homeassistant": "2024.11.0"
+}

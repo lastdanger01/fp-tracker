@@ -1,0 +1,21 @@
+refresh:
+  name: 立即更新
+  description: 立即重新抓取配送狀態，不等下一次排程。
+
+notify:
+  name: 送出配送狀態通知
+  description: 把目前的配送狀態以通知送出去。
+  fields:
+    message:
+      name: 自訂訊息
+      description: 留空則使用預設的配送狀態摘要。
+      required: false
+      selector:
+        text:
+    title:
+      name: 通知標題
+      description: 通知的標題。
+      required: false
+      default: foodpanda 配送狀態
+      selector:
+        text:

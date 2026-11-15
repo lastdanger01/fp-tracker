@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "foodpanda live tracker",
+        "description": "Paste your foodpanda tokens. They can be found in the browser after logging in: F12 → Application → Cookies → www.foodpanda.com. The device_token is in the JWT payload of the access token.",
+        "data": {
+          "token": "Access token",
+          "device_token": "Device token",
+          "refresh_token": "Refresh token",
+          "client_id": "Perseus Client Id (optional)",
+          "session_id": "Perseus Session Id (optional)",
+          "user_source": "User Source (optional)",
+          "localcode": "Country code"
+        }
+      }
+    },
+    "error": {
+      "token_required": "The token cannot be empty."
+    },
+    "abort": {
+      "already_configured": "This token is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "foodpanda live tracker",
+        "data": {
+          "token": "Access token",
+          "device_token": "Device token",
+          "refresh_token": "Refresh token",
+          "client_id": "Perseus Client Id (optional)",
+          "session_id": "Perseus Session Id (optional)",
+          "user_source": "User Source (optional)",
+          "localcode": "Country code"
+        }
+      }
+    }
+  }
+}
