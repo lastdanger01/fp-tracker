@@ -308,9 +308,9 @@ def _extract_products(order: dict) -> list[dict]:
         if not name:
             continue
         try:
-            quantity = int(item.get("quantity") or 0)
+            quantity = int(item.get("quantity") or 1)
         except (TypeError, ValueError):
-            quantity = 0
+            quantity = 1
         try:
             price = float(item.get("total_price") or 0)
         except (TypeError, ValueError):
