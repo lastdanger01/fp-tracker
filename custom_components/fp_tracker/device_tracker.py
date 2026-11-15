@@ -6,8 +6,7 @@ can show the courier moving towards the delivery address.
 
 from __future__ import annotations
 
-from homeassistant.components.device_tracker import SourceType
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -58,11 +57,6 @@ class CourierTracker(CoordinatorEntity[TrackerCoordinator], TrackerEntity):
     def location_accuracy(self) -> int:
         """Return the location accuracy in meters."""
         return 100
-
-    @property
-    def battery_level(self) -> int | None:
-        """Return the battery level; the API does not report it."""
-        return None
 
     @property
     def extra_state_attributes(self) -> dict:
