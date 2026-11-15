@@ -8,6 +8,7 @@ not hide each other.
 
 from __future__ import annotations
 
+import html
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -19,6 +20,21 @@ _LOGGER = logging.getLogger(__name__)
 # The states worth notifying about. Going from "preparing" to "picked up"
 # matters, but a poll that returns the same state twice does not.
 NOTIFY_STATES = {"preparing", "accepted", "picked_up", "arrived", "delivered", "cancelled"}
+
+# "notify.send_message" is an entity service: without a target it fails
+# with "must contain at least one of entity_id, device_id, ...". The
+# group service "notify.notify" reaches every notify service instead.
+SERVICE_GROUP = "notify"
+
+
+def escape_html(text: str) -> str:
+    """Escape a text for telegram, which parses the message as HTML.
+
+    Without this a restaurant called "湯包 & 豆漿" or a message that
+    contains "<" makes telegram reject the whole message with
+    "Can't parse entities".
+    """
+    return html.escape(str(text), quote=False)
 
 
 def _build_message(data: dict) -> str:
@@ -62,10 +78,10 @@ async def async_setup_notifications(hass: HomeAssistant, coordinator: TrackerCoo
         try:
             await hass.services.async_call(
                 "notify",
-                "send_message",
+                SERVICE_GROUP,
                 {
-                    "message": _build_message(data),
-                    "title": "foodpanda 配送狀態",
+                    "message": escape_html(_build_message(data)),
+                    "title": escape_html("foodpanda 配送狀態"),
                 },
                 blocking=False,
             )

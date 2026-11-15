@@ -36,7 +36,7 @@ from .const import (
 )
 from .coordinator import TrackerCoordinator
 from .credentials import async_load_credentials, async_load_shared_credentials
-from .notify import async_setup_notifications
+from .notify import SERVICE_GROUP, async_setup_notifications, escape_html
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -153,8 +153,11 @@ def _register_services(hass: HomeAssistant) -> None:
                     text = message
                 await hass.services.async_call(
                     "notify",
-                    "send_message",
-                    {"message": text, "title": title},
+                    SERVICE_GROUP,
+                    {
+                        "message": escape_html(text),
+                        "title": escape_html(title),
+                    },
                     blocking=False,
                 )
 
@@ -174,12 +177,20 @@ def _register_services(hass: HomeAssistant) -> None:
             f"{result['count']} 筆訂單，合計 NT${result['total']:,}\n"
             f"{result['path']}"
         )
-        await hass.services.async_call(
-            "notify",
-            "send_message",
-            {"message": message, "title": "foodpanda 餐費分析"},
-            blocking=False,
-        )
+        # The page is already written at this point, so a notification
+        # that fails must not turn the whole service call into an error.
+        try:
+            await hass.services.async_call(
+                "notify",
+                SERVICE_GROUP,
+                {
+                    "message": escape_html(message),
+                    "title": escape_html("foodpanda 餐費分析"),
+                },
+                blocking=False,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("統計頁已產生，但通知送出失敗：%s", err)
 
     hass.services.async_register(DOMAIN, SERVICE_REFRESH, _refresh)
     hass.services.async_register(DOMAIN, SERVICE_NOTIFY, _notify)
