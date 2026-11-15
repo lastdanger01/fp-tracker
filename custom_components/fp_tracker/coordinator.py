@@ -182,7 +182,9 @@ class TrackerCoordinator(DataUpdateCoordinator):
             return await self.client.async_get_active_orders()
         except FoodpandaApiError as err:
             # A dead token is worth one refresh attempt before giving up.
-            if "過期" in str(err):
+            # The status code tells a dead token apart from a rejected
+            # request: only a 401 means the token has to be refreshed.
+            if err.status == 401:
                 if await self.client.async_refresh_token():
                     await self._async_persist_credentials()
                     try:

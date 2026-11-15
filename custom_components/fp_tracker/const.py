@@ -82,6 +82,17 @@ LOGIN_HOSTS = {
 
 REQUEST_TIMEOUT = 25
 
+# The bot protection in front of the login API answers HTTP 403 with a
+# captcha challenge at random: the very same request that answers 200
+# the first time answers 403 the second time. A refresh that gives up on
+# the first captcha leaves the integration without a working token, so
+# the request is repeated a few times before it is called a failure.
+#
+# HTTP 400 is not retried: it means the refresh token is unknown to the
+# server, and repeating it would not change that.
+REFRESH_RETRY_ATTEMPTS = 4
+REFRESH_RETRY_DELAY = 5
+
 # The x-device header identifies the app installation. The foodpanda
 # login API expects it, and the same device token belongs to it.
 DEFAULT_X_DEVICE = (

@@ -35,6 +35,8 @@ from .const import (
     CONF_X_DEVICE,
     DEFAULT_X_DEVICE,
     LOGIN_HOSTS,
+    REFRESH_RETRY_ATTEMPTS,
+    REFRESH_RETRY_DELAY,
     REQUEST_TIMEOUT,
     STATE_ACCEPTED,
     STATE_ARRIVED,
@@ -532,7 +534,15 @@ class FoodpandaClient:
 
         The refresh rotates the refresh token, so the caller has to
         persist the new value. `async_get_credentials` returns the
-        current credentials for that.
+        current credentials for this.
+
+        The bot protection in front of the login API answers HTTP 403
+        with a captcha challenge at random, so a single attempt is not
+        enough: the same request that answers 200 once answers 403 the
+        next time. A 403 is therefore retried with the other user agent
+        and with a short pause in between. HTTP 400 is not retried,
+        because it means the server does not know the refresh token and
+        repeating the request would not change that.
         """
         payload = {
             "country": self.localcode,
@@ -557,41 +567,79 @@ class FoodpandaClient:
             )
 
         last_status = 0
-        for agent in (USER_AGENT_MOBILE, USER_AGENT_DESKTOP):
-            try:
-                response = await self.hass.async_add_executor_job(
-                    functools.partial(_call, agent)
-                )
-            except requests.exceptions.RequestException as err:
-                _LOGGER.warning("refresh token 失敗：%s", err)
+        captcha_hits = 0
+
+        for attempt in range(REFRESH_RETRY_ATTEMPTS):
+            # The mobile user agent gets through where the desktop one
+            # is asked for a captcha, so it goes first.
+            agents = (
+                (USER_AGENT_MOBILE, USER_AGENT_DESKTOP)
+                if attempt % 2 == 0
+                else (USER_AGENT_DESKTOP, USER_AGENT_MOBILE)
+            )
+
+            for agent in agents:
+                try:
+                    response = await self.hass.async_add_executor_job(
+                        functools.partial(_call, agent)
+                    )
+                except requests.exceptions.RequestException as err:
+                    _LOGGER.warning("refresh token 失敗：%s", err)
+                    return False
+
+                last_status = response.status_code
+
+                if response.status_code == HTTPStatus.OK:
+                    cookies = _parse_set_cookies(response)
+                    self.token = cookies.get(CONF_TOKEN, {}).get(CONF_TOKEN, self.token)
+                    self.device_token = cookies.get(CONF_DEVICE_TOKEN, {}).get(
+                        CONF_DEVICE_TOKEN, self.device_token
+                    )
+                    self.refresh_token = cookies.get(CONF_REFRESH_TOKEN, {}).get(
+                        CONF_REFRESH_TOKEN, self.refresh_token
+                    )
+                    self.client_id = cookies.get("dhhPerseusGuestId", {}).get(
+                        "dhhPerseusGuestId", self.client_id
+                    )
+                    self.session_id = cookies.get("dhhPerseusSessionId", {}).get(
+                        "dhhPerseusSessionId", self.session_id
+                    )
+                    self.user_source = cookies.get("userSource", {}).get(
+                        "userSource", self.user_source
+                    )
+                    expires = cookies.get(CONF_TOKEN, {}).get("expires", "")
+                    if expires:
+                        self.token_timeout = _parse_cookie_expiry(expires)
+                    if captcha_hits:
+                        _LOGGER.info(
+                            "refresh token 成功，之前被 captcha 擋了 %s 次", captcha_hits
+                        )
+                    return True
+
+                if response.status_code == HTTPStatus.FORBIDDEN:
+                    # The captcha challenge. The request itself is fine,
+                    # so the next user agent is tried right away.
+                    captcha_hits += 1
+                    continue
+
+                # Any other status is the answer of the API itself and
+                # repeating the request would not change it.
+                _LOGGER.warning("refresh token 失敗，HTTP %s", last_status)
                 return False
 
-            last_status = response.status_code
+            if attempt < REFRESH_RETRY_ATTEMPTS - 1:
+                _LOGGER.debug(
+                    "refresh 被 captcha 擋（第 %s 次），%s 秒後再試",
+                    captcha_hits,
+                    REFRESH_RETRY_DELAY,
+                )
+                await asyncio.sleep(REFRESH_RETRY_DELAY)
 
-            if response.status_code == HTTPStatus.OK:
-                cookies = _parse_set_cookies(response)
-                self.token = cookies.get(CONF_TOKEN, {}).get(CONF_TOKEN, self.token)
-                self.device_token = cookies.get(CONF_DEVICE_TOKEN, {}).get(
-                    CONF_DEVICE_TOKEN, self.device_token
-                )
-                self.refresh_token = cookies.get(CONF_REFRESH_TOKEN, {}).get(
-                    CONF_REFRESH_TOKEN, self.refresh_token
-                )
-                self.client_id = cookies.get("dhhPerseusGuestId", {}).get(
-                    "dhhPerseusGuestId", self.client_id
-                )
-                self.session_id = cookies.get("dhhPerseusSessionId", {}).get(
-                    "dhhPerseusSessionId", self.session_id
-                )
-                self.user_source = cookies.get("userSource", {}).get(
-                    "userSource", self.user_source
-                )
-                expires = cookies.get(CONF_TOKEN, {}).get("expires", "")
-                if expires:
-                    self.token_timeout = _parse_cookie_expiry(expires)
-                return True
-
-        _LOGGER.warning("refresh token 失敗，HTTP %s", last_status)
+        _LOGGER.warning(
+            "refresh token 失敗，HTTP %s（被 captcha 擋了 %s 次）",
+            last_status,
+            captcha_hits,
+        )
         return False
 
     def async_get_credentials(self) -> dict:
