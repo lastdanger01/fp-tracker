@@ -275,6 +275,13 @@ def _extract_courier(order: dict) -> dict:
     except (TypeError, ValueError):
         lat = lon = None
 
+    # A courier without a real position is reported as (0, 0), which is
+    # a point in the ocean off the coast of Africa. Taking it for a
+    # position would put the courier half a world away and produce a
+    # distance of millions of meters, so it is treated as no position.
+    if lat == 0 and lon == 0:
+        lat = lon = None
+
     vehicle = courier.get("vehicle_type") or courier.get("vehicle") or ""
 
     return {
@@ -284,6 +291,62 @@ def _extract_courier(order: dict) -> dict:
         "latitude": lat,
         "longitude": lon,
     }
+
+
+def _extract_products(order: dict) -> list[dict]:
+    """Return the products of an order with their quantity and price.
+
+    The same product can appear more than once in the list, once per
+    line of the order, so the lines are kept as they are and the
+    summary merges them.
+    """
+    products: list[dict] = []
+    for item in order.get("order_products") or []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or ""
+        if not name:
+            continue
+        try:
+            quantity = int(item.get("quantity") or 0)
+        except (TypeError, ValueError):
+            quantity = 0
+        try:
+            price = float(item.get("total_price") or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        products.append(
+            {"name": name, "quantity": quantity, "price": round(price)}
+        )
+    return products
+
+
+def summarize_products(products: list[dict]) -> tuple[str, int]:
+    """Return a one line summary of the products and the item count.
+
+    The same product on several lines of the order is merged, so three
+    lines of the same dessert read as "dessert x3".
+    """
+    merged: dict[str, dict] = {}
+    total = 0
+    for product in products:
+        name = product.get("name") or ""
+        if not name:
+            continue
+        quantity = int(product.get("quantity") or 0)
+        total += quantity
+        if name in merged:
+            merged[name]["quantity"] += quantity
+        else:
+            merged[name] = {
+                "name": name,
+                "quantity": quantity,
+                "price": product.get("price", 0),
+            }
+    summary = "、".join(
+        f"{item['name']}×{item['quantity']}" for item in merged.values()
+    )
+    return summary, total
 
 
 class FoodpandaApiError(Exception):

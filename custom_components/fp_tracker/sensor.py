@@ -33,6 +33,7 @@ async def async_setup_entry(
         entities.extend(
             [
                 TrackerStateSensor(coordinator, slot),
+                TrackerProductsSensor(coordinator, slot),
                 TrackerEtaSensor(coordinator, slot),
                 TrackerEtaEstimateSensor(coordinator, slot),
                 TrackerDistanceSensor(coordinator, slot),
@@ -91,6 +92,37 @@ class TrackerStateSensor(_BaseTrackerSensor):
             "delivery_latitude": data.get("delivery_latitude"),
             "delivery_longitude": data.get("delivery_longitude"),
             "changed_at": data.get("changed_at"),
+        }
+
+
+class TrackerProductsSensor(_BaseTrackerSensor):
+    """What was ordered in this order slot."""
+
+    _attr_name = "訂單內容"
+    _attr_icon = "mdi:format-list-bulleted"
+
+    def __init__(self, coordinator: TrackerCoordinator, slot: int) -> None:
+        super().__init__(coordinator, slot)
+        self._attr_unique_id = f"{DOMAIN}_products_{slot}"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the products of the order as one line."""
+        data = self._data
+        if not data:
+            return None
+        return data.get("products_summary") or None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return the products one by one."""
+        data = self._data
+        if not data:
+            return {}
+        return {
+            "products": data.get("products") or [],
+            "item_count": data.get("item_count", 0),
+            "products_summary": data.get("products_summary"),
         }
 
 

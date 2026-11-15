@@ -21,10 +21,12 @@ from .api import (
     _extract_courier,
     _extract_delivery_address,
     _extract_eta_minutes,
+    _extract_products,
     _parse_api_datetime,
     courier_distance_m,
     derive_state,
     estimate_eta_minutes,
+    summarize_products,
 )
 from .const import (
     ARRIVED_DISTANCE_M,
@@ -352,6 +354,10 @@ class TrackerCoordinator(DataUpdateCoordinator):
         if not isinstance(vendor, dict):
             vendor = {}
 
+        # The order content: what was ordered and how much of it.
+        products = _extract_products(merged)
+        summary, item_count = summarize_products(products)
+
         status = merged.get("current_status") or {}
         status_code = status.get("code") if isinstance(status, dict) else None
 
@@ -410,6 +416,9 @@ class TrackerCoordinator(DataUpdateCoordinator):
             "delivery_latitude": address["latitude"],
             "delivery_longitude": address["longitude"],
             "changed_at": changed_at.isoformat() if changed_at else None,
+            "products": products,
+            "products_summary": summary,
+            "item_count": item_count,
             "ordered_at": (
                 _parse_api_datetime(merged.get("ordered_at")).isoformat()
                 if _parse_api_datetime(merged.get("ordered_at"))

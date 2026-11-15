@@ -28,6 +28,8 @@ api = importlib.import_module("fpt.api")
 _extract_courier = api._extract_courier
 _extract_delivery_address = api._extract_delivery_address
 _extract_eta_minutes = api._extract_eta_minutes
+_extract_products = api._extract_products
+summarize_products = api.summarize_products
 courier_distance_m = api.courier_distance_m
 derive_state = api.derive_state
 estimate_eta_minutes = api.estimate_eta_minutes
@@ -215,6 +217,49 @@ check(
     _extract_courier({"courier": {"latitude": "abc", "longitude": "xyz"}}),
     {"name": "", "phone": "", "vehicle": "", "latitude": None, "longitude": None},
 )
+check(
+    "座標 (0,0) 視為無位置",
+    _extract_courier({"courier": {"latitude": 0.0, "longitude": 0.0}}),
+    {"name": "", "phone": "", "vehicle": "", "latitude": None, "longitude": None},
+)
+check(
+    "座標 (0,0) 時距離為 None",
+    courier_distance_m(
+        _extract_courier({"courier": {"latitude": 0.0, "longitude": 0.0}}),
+        [ADDR],
+    ),
+    None,
+)
+
+# --------------------------------------------------------------- products
+section("訂單內容")
+products = _extract_products(
+    {
+        "order_products": [
+            {"name": "燒仙草", "quantity": 1, "total_price": 65},
+            {"name": "燒仙草", "quantity": 1, "total_price": 65},
+            {"name": "珍珠奶茶", "quantity": 2, "total_price": 100},
+            {"name": "", "quantity": 1, "total_price": 10},
+        ]
+    }
+)
+check("品項數量（跳過空名）", len(products), 3)
+check("第一個品項", products[0]["name"], "燒仙草")
+check("數量", products[0]["quantity"], 1)
+check("價格", products[0]["price"], 65)
+
+summary, count = summarize_products(products)
+check("摘要合併同品項", summary, "燒仙草×2、珍珠奶茶×2")
+check("總件數", count, 4)
+
+summary2, count2 = summarize_products([])
+check("沒有品項 → 空摘要", summary2, "")
+check("沒有品項 → 0 件", count2, 0)
+
+summary3, _ = summarize_products(
+    [{"name": "紹辣乾麵【辣】", "quantity": 1, "price": 80}]
+)
+check("單一品項摘要", summary3, "紹辣乾麵【辣】×1")
 
 # --------------------------------------------------------------- address
 section("收件地址")
