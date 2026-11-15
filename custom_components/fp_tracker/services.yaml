@@ -19,3 +19,14 @@ notify:
       default: foodpanda 配送狀態
       selector:
         text:
+
+generate_stats:
+  name: 產生餐費統計頁
+  description: 重新抓取訂單歷史並產生餐費分析頁面。
+  fields:
+    account:
+      name: Foodpanda 帳號
+      description: 留空則使用共用憑證檔裡的帳號。
+      required: false
+      selector:
+        text:

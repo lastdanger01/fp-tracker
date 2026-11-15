@@ -47,6 +47,7 @@ CONFIG_SCHEMA = vol.Schema(
 
 SERVICE_REFRESH = "refresh"
 SERVICE_NOTIFY = "notify"
+SERVICE_STATS = "generate_stats"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -157,8 +158,32 @@ def _register_services(hass: HomeAssistant) -> None:
                     blocking=False,
                 )
 
+    async def _generate_stats(call: ServiceCall) -> None:
+        """Rebuild the spending statistics page from the order history."""
+        from .stats import async_generate_stats
+
+        account = call.data.get("account")
+        try:
+            result = await async_generate_stats(hass, account)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("產生 foodpanda 統計頁失敗：%s", err)
+            raise
+
+        message = (
+            f"foodpanda 統計頁已更新\n"
+            f"{result['count']} 筆訂單，合計 NT${result['total']:,}\n"
+            f"{result['path']}"
+        )
+        await hass.services.async_call(
+            "notify",
+            "send_message",
+            {"message": message, "title": "foodpanda 餐費分析"},
+            blocking=False,
+        )
+
     hass.services.async_register(DOMAIN, SERVICE_REFRESH, _refresh)
     hass.services.async_register(DOMAIN, SERVICE_NOTIFY, _notify)
+    hass.services.async_register(DOMAIN, SERVICE_STATS, _generate_stats)
 
 
 def _build_message(data: dict) -> str:
