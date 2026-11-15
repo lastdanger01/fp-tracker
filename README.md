@@ -125,6 +125,18 @@ foodpanda 不一定給 ETA。整合用送餐者 GPS 與送達地點的直線距�
 - foodpanda 沒有公開 API，這是逆向其 App 的 Web API。App 改版可能會失效。
 - Token 過期需要重新設定整合（整合會自動嘗試 refresh 一次）。
 - 已完成的訂單不會保留送餐者位置，只有進行中的訂單能追蹤。
+- 沒有進行中的訂單時，感測器顯示 `unavailable`，這是正常行為。
+
+## 開發與驗證
+
+```bash
+# 語法檢查
+python3 -c "import ast,glob;[ast.parse(open(f).read()) for f in glob.glob('custom_components/fp_tracker/*.py')]"
+
+# 驗證 API 欄位（需要有效的 token）
+curl -sk -H "Authorization: Bearer <token>" \
+  "https://tw.fd-api.com/api/v5/orders/order_history?include=order_products,order_details" | head -c 500
+```
 
 ## 授權
 
